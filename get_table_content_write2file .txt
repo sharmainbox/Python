@@ -1,0 +1,39 @@
+#!/bin/sh
+if [ $# -ge 1 ];then
+    FILE_NAME="$1"
+else
+    echo "[ERROR]: Missing argument: <FileName>.csv"
+    exit 128
+fi
+FILE_LOCATION="/share/etlprd/export_import/snowflake/"
+TIME_STAMP=$(date +'%m%d%Y-%H%M%S')
+cd $FILE_LOCATION
+#Sanitize the input file - 
+#   1. Get only DATE field excluding time.
+#   2. Remove Header
+awk -F'[, ]' '{print $1}' "${FILE_NAME}" > ./preprocessed.txt
+sed '1d' ./preprocessed.txt > ./preprocessed_noheader.txt
+# Set DB settings
+export NZ_USER="XXXXXX" 
+export NZ_DATABASE="XXXXXX"
+export NZ_HOST="XXXXXX"
+export NZ_PASSWORD="XXXXXX"
+while read line;do
+    echo "\n\nStarted extracting conetent from Netezza table TREADING for the date range: ${line}"
+    rundate=$(echo ${line} | awk '{print $1}') 
+    next_file="TREADING_$(echo ${rundate} | tr / -)"
+    echo "[DEBUG] rundate: $rundate, enddate: $enddate, next_file: $next_file.csv, Outputlog: run_output_${TIME_STAMP}.log"
+    nzsql  << eof 
+CREATE EXTERNAL TABLE '/share/etlprd/export_import/snowflake/$next_file.csv'
+				USING
+				(
+				DELIMITER ','
+				escapeChar '\'
+				LOGDIR '/share/etlprd/export_import/snowflake'
+				MAXERRORS 1
+				)
+as  SELECT <Col Names>  FROM <TableName> where <InsertedDate> = cast('$rundate' as date);
+eof
+    gzip "${next_file}.csv" && rm -f "${next_file}.csv"
+	split -b 120m "${next_file}.csv.gz" "${next_file}.part"
+done <./preprocessed_noheader.txt 2>&1 | tee "run_output_${TIME_STAMP}.log"
